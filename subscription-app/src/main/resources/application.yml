@@ -1,0 +1,41 @@
+spring:
+  application:
+    name: subscription-app
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    username: mysqldb_subscription
+    password: ben5915200226
+    url: jdbc:mysql://localhost:3306/mysqldb_subscription
+    hikari:
+      data-source-properties:
+        rewriteBatchedStatements: true
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        jdbc:
+          batch_size: 1000
+        format_sql: true
+        default_batch_fetch_size: 1000
+springdoc:
+  use-fqn: true
+  swagger-ui:
+    path: /kl-swagger-ui/index.html
+    disable-swagger-default-url: true
+    operations-sorter: method #alpha
+    tags-sorter: method #alpha
+logging:
+  level:
+    feign: debug
+    org:
+      springframework:
+        cloud:
+          openfeign: debug
+    com:
+      seaotter:
+        infra:
+          billing:
+            feign:
+              NicePaymentFeign: debug
