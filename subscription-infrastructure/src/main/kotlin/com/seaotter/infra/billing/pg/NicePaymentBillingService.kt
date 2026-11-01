@@ -24,8 +24,8 @@ class NicePaymentBillingService(
 ) {
   val log = LoggerFactory.getLogger(this::class.java)
 
-  val merchantId: String ="nictest26m"
-  val merchantKey: String ="yEALxi09avQoCtEj75hocQyZX+j9fsUk60B3GB7MQksLCnwLNTZLEGe7nedF5+qaJZZeNovXB4s9qPuA6zzqWQ=="
+  val merchantId: String ="nictest2test"
+  val merchantKey: String ="fake_merchant_key_nictest2test"
 
   fun registerBillingKey(billingKeyRegisterRequest: BillingKeyRegisterRequest): BillingKeyRegisterResponse {
     log.info("registerBillingKey > billingKeyRegisterRequest: {}", billingKeyRegisterRequest)
