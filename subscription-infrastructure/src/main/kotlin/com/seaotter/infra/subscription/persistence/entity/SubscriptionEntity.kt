@@ -11,6 +11,7 @@ import jakarta.persistence.EnumType
 import jakarta.persistence.Enumerated
 import jakarta.persistence.Index
 import jakarta.persistence.Table
+import jakarta.persistence.Version
 import org.hibernate.annotations.JdbcTypeCode
 import org.hibernate.type.SqlTypes
 import java.math.BigDecimal
@@ -57,6 +58,11 @@ class SubscriptionEntity(
   @JdbcTypeCode(SqlTypes.JSON)
   var nextSnapshot: PlanSnapshot? = null // 스냅샷 계약 정보가 바뀌어서 아예 새로운 subscription 을 만들 재료
 
+  // 낙관적 락. 기존 행에는 0이 채워지도록 기본값을 둔다(ddl-auto update 로 컬럼이 추가될 때).
+  @Version
+  @Column(name = "version", columnDefinition = "bigint not null default 0")
+  var version: Long? = null
+
   fun toDomain(): Subscription {
     val subscription = Subscription(
       enterpriseId = this.id.enterpriseId,
@@ -77,6 +83,7 @@ class SubscriptionEntity(
     subscription.cancelRequestedAt = cancelRequestedAt
     subscription.canceledAt = canceledAt
     subscription.nextSnapshot = nextSnapshot
+    subscription.version = version
     return subscription
   }
 
@@ -107,6 +114,7 @@ class SubscriptionEntity(
       entity.cancelRequestedAt = domain.cancelRequestedAt
       entity.canceledAt = domain.canceledAt
       entity.nextSnapshot = domain.nextSnapshot
+      entity.version = domain.version
       return entity
     }
   }

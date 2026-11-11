@@ -20,8 +20,22 @@ class SubscriptionInvoice(
 ) {
   var lastFailedAt: LocalDateTime? = null
   var resolvedAt: LocalDateTime? = null
+
+  // 낙관적 락 버전. 새로 만든 송장은 null 이다.
+  var version: Long? = null
+
   init {
     require(!lockGeneratingInvoice) {"현재 INVOICE 를 생성할 수 없게 조치되어있습니다."}
+  }
+
+  fun isBillable(): Boolean = this.state.status in BILLABLE_STATUSES
+
+  // PG 를 호출하기 전에 송장을 선점한다.
+  // 여러 인스턴스가 같은 송장을 동시에 집어도, 이 상태 변경을 먼저 커밋한 한 곳만 결제로 넘어간다(낙관적 락).
+  fun startProcessing(): SubscriptionInvoice {
+    check(isBillable()) { "결제할 수 없는 송장 상태입니다. status=${this.state.status}" }
+    this.state = this.state.copy(status = InvoiceStatus.PROCESSING)
+    return this
   }
 
   // 1. invoice 단에서 먼저 pay -> 결과에 따라 subscription 도 후처리
@@ -70,5 +84,11 @@ data class InvoiceState(
 }
 
 enum class InvoiceStatus {
-  DRAFT, RESOLVED, PAYMENT_ON_FAILURE, DISCARDED
+  DRAFT,
+  // 결제 요청을 보내는 중. PG 응답을 받기 전에 프로세스가 죽거나 응답이 없으면 이 상태로 남는다.
+  // 결과를 모르는 상태이므로 자동 재시도하지 않고, PG 거래 내역과 대조해 수동으로 정리한다.
+  PROCESSING,
+  RESOLVED, PAYMENT_ON_FAILURE, DISCARDED
 }
+
+private val BILLABLE_STATUSES = setOf(InvoiceStatus.DRAFT, InvoiceStatus.PAYMENT_ON_FAILURE)

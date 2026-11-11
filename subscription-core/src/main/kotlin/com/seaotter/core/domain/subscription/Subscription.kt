@@ -25,6 +25,10 @@ class Subscription(
   var cancelRequestedAt: LocalDateTime? = null
   var canceledAt: LocalDateTime? = null
 
+  // 낙관적 락 버전. 저장소에서 읽어 온 값을 그대로 들고 있다가 저장할 때 비교한다.
+  // 새로 만든 구독은 null 이다.
+  var version: Long? = null
+
 //  var isTerminateRequested: Boolean = false
   var nextSnapshot: PlanSnapshot? = null // 스냅샷 계약 정보가 바뀌어서 아예 새로운 subscription 을 만들 재료
 

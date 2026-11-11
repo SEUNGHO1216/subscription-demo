@@ -12,6 +12,8 @@ import jakarta.persistence.EnumType
 import jakarta.persistence.Enumerated
 import jakarta.persistence.Index
 import jakarta.persistence.Table
+import jakarta.persistence.UniqueConstraint
+import jakarta.persistence.Version
 import org.hibernate.annotations.JdbcTypeCode
 import org.hibernate.type.SqlTypes
 import java.time.LocalDate
@@ -23,6 +25,10 @@ import java.time.LocalDateTime
     Index(name = "idx_enterprise_subscription", columnList = "enterprise_id, subscription_id"),
     Index(name = "idx_targetbillingdate_status", columnList = "target_billing_date, status"),
     Index(name = "idx_enterprise_targetbillingdate_status", columnList = "enterprise_id, target_billing_date, status"),
+  ],
+  // 같은 구독의 같은 결제 시점 송장은 하나만 존재한다. 애플리케이션 검사가 동시 실행으로 뚫려도 DB가 막는다.
+  uniqueConstraints = [
+    UniqueConstraint(name = "uk_invoice_subscription_target", columnNames = ["enterprise_id", "subscription_id", "target_billing_at"]),
   ]
 )
 @Entity
@@ -52,6 +58,11 @@ class SubscriptionInvoiceEntity(
   var lastFailedAt: LocalDateTime? = null
   var resolvedAt: LocalDateTime? = null
 
+  // 낙관적 락. 기존 행에는 0이 채워지도록 기본값을 둔다(ddl-auto update 로 컬럼이 추가될 때).
+  @Version
+  @Column(name = "version", columnDefinition = "bigint not null default 0")
+  var version: Long? = null
+
 
   fun toDomain(): SubscriptionInvoice {
     val domain = SubscriptionInvoice(
@@ -70,6 +81,7 @@ class SubscriptionInvoiceEntity(
     )
     domain.lastFailedAt = this.lastFailedAt
     domain.resolvedAt = this.resolvedAt
+    domain.version = this.version
     return domain
   }
 
@@ -95,6 +107,7 @@ class SubscriptionInvoiceEntity(
       )
       entity.lastFailedAt = domain.lastFailedAt
       entity.resolvedAt = domain.resolvedAt
+      entity.version = domain.version
       return entity
     }
   }
