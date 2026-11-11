@@ -10,6 +10,9 @@ spring:
     hikari:
       data-source-properties:
         rewriteBatchedStatements: true
+  sql:
+    init:
+      mode: always # schema.sql 의 shedlock 테이블을 기동 시 만든다 (CREATE TABLE IF NOT EXISTS)
   jpa:
     open-in-view: false
     hibernate:

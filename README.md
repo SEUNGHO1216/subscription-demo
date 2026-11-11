@@ -100,6 +100,14 @@ stateDiagram-v2
 ### 3. 여러 인스턴스에서 동시에 돌아도 송장과 결제는 한 번만
 서버를 여러 대 띄우면 같은 시각에 스케줄러가 여러 곳에서 돕니다. 수동 실행 API와 겹칠 수도 있습니다.
 
+**1차: 스케줄은 한 서버에서만 실행** (ShedLock `@SchedulerLock`)
+- 모든 서버가 같은 DB의 `shedlock` 테이블에 "만료된 락만 가져간다"는 조건부 UPDATE를 보내고, 성공한 한 서버만 실행합니다. 나머지는 기다리지 않고 건너뜁니다.
+- 낙관적 락만 쓰면 서버가 같은 목록을 같은 순서로 돌기 때문에 충돌이 드문 일이 아니라 매번 일어납니다(서버 k대, 송장 N개면 최대 (k-1)×N번 예외와 롤백). 그래서 충돌을 실행 단계에서 먼저 없앱니다.
+- `lockAtLeastFor`(1분): 작업이 금방 끝나도 락을 유지해, 시계가 몇 초 늦은 서버가 같은 회차를 다시 실행하지 못하게 합니다. 만료 판단은 DB 시계로 합니다(`usingDbTime`).
+- `lockAtMostFor`(송장 30분, 결제 2시간): 실행 중 서버가 죽어도 이 시간이 지나면 락이 풀립니다.
+
+**2차: 락이 만료돼 겹치거나 수동 실행과 겹치는 드문 경우** — 아래 낙관적 락과 유니크 제약이 막습니다.
+
 **송장 발행** (`SubscriptionInvoiceIssuer`)
 - 구독마다 독립 트랜잭션(`REQUIRES_NEW`)으로 처리하고, 트랜잭션 안에서 구독을 다시 읽어 활성 상태·송장 잠금을 확인합니다.
 - 구독 엔티티의 `@Version` 낙관적 락: 두 곳이 같은 구독에 송장 잠금을 걸면 늦게 커밋한 쪽이 실패합니다.
@@ -110,7 +118,7 @@ stateDiagram-v2
 - **PG 호출**: 트랜잭션 밖에서 합니다. DB 커넥션을 PG 응답 시간 동안 붙잡지 않습니다.
 - **결과 반영**: 송장과 구독을 한 트랜잭션에서 함께 바꿉니다. 한 건이 실패해도 다른 송장의 결과는 그대로 커밋됩니다.
 
-`BillingConcurrencyIntegrationTest`가 실제 MySQL(Testcontainers)에서 8개 스레드로 이를 확인합니다. 같은 시나리오를 이 변경 전 코드에 돌리면 송장 8개 생성, PG 결제 요청 8번이 나갔습니다.
+`BillingConcurrencyIntegrationTest`가 실제 MySQL(Testcontainers)에서 8개 스레드로 2차 방어를 확인합니다. 같은 시나리오를 이 변경 전 코드에 돌리면 송장 8개 생성, PG 결제 요청 8번이 나갔습니다. `SchedulerLockIntegrationTest`는 서버 3대가 같은 cron을 동시에 실행해도 작업이 한 번만 실행되는지 확인합니다(락을 끄면 실패).
 
 ### 4. 금액 계산
 금액은 `BigDecimal`로 계산하고, 일할 계산은 소수 10자리까지 나눈 뒤 곱합니다. 마지막에 요금제의 `roundMode`(`HALF_UP` / `FLOOR` / `CEILING`)로 `Long`으로 변환합니다. 결제 회차는 `payVersion`으로 구독·송장·결제에 같이 기록합니다.
@@ -124,7 +132,7 @@ stateDiagram-v2
 ### 7. 기타
 - 식별자는 ULID에 짧은 난수를 붙여 시간순 정렬이 가능합니다.
 - JPA 배치 설정(`batch_size`, `rewriteBatchedStatements`, `default_batch_fetch_size`)과 `open-in-view: false`를 사용합니다.
-- 테이블은 `ddl-auto: update`로 자동 생성됩니다. 이미 만들어진 DB에서는 `version` 컬럼과 송장 유니크 제약이 추가되며, 기존 데이터에 같은 회차 송장이 중복돼 있으면 유니크 제약이 생성되지 않으니 먼저 정리해야 합니다. API 문서(Swagger UI)는 http://localhost:8080/kl-swagger-ui/index.html 입니다.
+- 테이블은 `ddl-auto: update`로 자동 생성됩니다. 엔티티가 아닌 `shedlock` 테이블은 `schema.sql`로 기동 시 만듭니다. 이미 만들어진 DB에서는 `version` 컬럼과 송장 유니크 제약이 추가되며, 기존 데이터에 같은 회차 송장이 중복돼 있으면 유니크 제약이 생성되지 않으니 먼저 정리해야 합니다. API 문서(Swagger UI)는 http://localhost:8080/kl-swagger-ui/index.html 입니다.
 
 > 빌링키 등록·결제·환불처럼 PG를 호출하는 API는 나이스페이먼츠 가맹점 설정이 있어야 동작합니다. 그 외 API(상품·요금제·구독 조회 등)는 PG 없이 확인할 수 있습니다.
 
@@ -158,6 +166,7 @@ DB_PASSWORD=... ./gradlew :subscription-app:bootRun
 | `SubscriptionInvoiceTest` | 재시도 횟수와 폐기, 선점 가능한 상태 |
 | `InvoicePricingTest` | 일할 계산 금액과 반올림 방식 |
 | `BillingConcurrencyIntegrationTest` | 동시 송장 발행·동시 결제·PG 응답 없음·배치 내 오류 격리, 유니크 제약과 낙관적 락 |
+| `SchedulerLockIntegrationTest` | 스케줄 동시 실행 시 한 번만 실행, `lockAtLeastFor` 동안 재실행 차단, 스케줄별 락 분리 |
 
 ## 남은 과제
 
