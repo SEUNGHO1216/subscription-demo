@@ -3,9 +3,10 @@ spring:
     name: subscription-app
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
-    username: mysqldb_subscription
-    password: ben5915200226
-    url: jdbc:mysql://localhost:3306/mysqldb_subscription
+    # 접속 정보는 환경 변수로 받는다. 비밀번호는 기본값을 두지 않는다.
+    username: ${DB_USERNAME:mysqldb_subscription}
+    password: ${DB_PASSWORD}
+    url: ${DB_URL:jdbc:mysql://localhost:3306/mysqldb_subscription}
     hikari:
       data-source-properties:
         rewriteBatchedStatements: true
