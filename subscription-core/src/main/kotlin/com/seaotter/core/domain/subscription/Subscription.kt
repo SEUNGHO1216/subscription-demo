@@ -3,6 +3,7 @@ package com.seaotter.core.domain.subscription
 import com.github.f4b6a3.ulid.UlidCreator
 import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.YearMonth
 import java.util.UUID
 
 class Subscription(
@@ -53,12 +54,15 @@ class Subscription(
     }
   }
 
+  // 활성 ↔ 비활성 전환.
+  // 이전 구현은 if 두 개를 이어서 검사해, ACTIVE 로 바꾼 직후 두 번째 if 가 다시 INACTIVE 로 되돌렸다.
+  // 그래서 PENDING·INACTIVE 구독이 활성화되지 않았고, 후불 구독은 시작하자마자 INACTIVE 가 됐다.
   fun toggleActive(): Subscription {
-    if (this.status !in listOf(SubscriptionStatus.TERMINATED, SubscriptionStatus.PAYMENT_ON_FAILURE) ) {
-      this.status = SubscriptionStatus.ACTIVE
-    }
-    if (this.status in listOf(SubscriptionStatus.ACTIVE, SubscriptionStatus.PAYMENT_ON_FAILURE)) {
-      this.status = SubscriptionStatus.INACTIVE
+    this.status = when (this.status) {
+      SubscriptionStatus.PENDING, SubscriptionStatus.INACTIVE -> SubscriptionStatus.ACTIVE
+      SubscriptionStatus.ACTIVE, SubscriptionStatus.PAYMENT_ON_FAILURE -> SubscriptionStatus.INACTIVE
+      SubscriptionStatus.TERMINATE_READY, SubscriptionStatus.TERMINATED ->
+        throw IllegalStateException("해지 요청 중이거나 해지된 구독은 활성 상태를 바꿀 수 없습니다.")
     }
     return this
   }
@@ -117,29 +121,16 @@ class Subscription(
       }
 
       CycleUnit.MONTH -> {
-        if (billingPolicy.anchorPayDays != null && billingPolicy.anchorPayDays?.isNotEmpty() == true) {
-          val today = LocalDate.now().dayOfMonth
-          val payDay = billingPolicy.anchorPayDays!!.first()
-          if (today < payDay) {
-            this.nextBillingAt = LocalDateTime.of(
-              commandAt.year,
-              commandAt.monthValue,
-              payDay,
-              commandAt.hour,
-              commandAt.minute,
-              commandAt.second
-            )
-          } else {
-            this.nextBillingAt =
-              LocalDateTime.of(
-                commandAt.year,
-                commandAt.plusMonths(1).monthValue,
-                payDay,
-                commandAt.hour,
-                commandAt.minute,
-                commandAt.second
-              )
-          }
+        val payDay = billingPolicy.anchorPayDays?.firstOrNull()
+        if (payDay != null) {
+          // 결제 기준일이 이번 달에 아직 안 지났으면 이번 달, 지났으면 다음 달.
+          // 이전 구현의 문제 세 가지를 고쳤다.
+          //  - 연도를 commandAt.year 로 고정해 12월 가입자의 다음 결제일이 '올해 1월'(과거)이 됐다.
+          //  - 31일 기준일이 2월·4월 등에서 존재하지 않는 날짜라 예외가 났다 → 그 달의 말일로 맞춘다.
+          //  - 기준 날짜를 commandAt 이 아니라 LocalDate.now() 로 봤다.
+          val thisMonth = YearMonth.from(commandAt)
+          val targetMonth = if (commandAt.dayOfMonth < clampDay(thisMonth, payDay)) thisMonth else thisMonth.plusMonths(1)
+          this.nextBillingAt = atAnchorDay(targetMonth, payDay, commandAt)
           return
         }
         this.nextBillingAt = commandAt.plusMonths(billingPolicy.cycle.toLong())
@@ -196,7 +187,15 @@ class Subscription(
       }
 
       CycleUnit.MONTH -> {
-        this.nextBillingAt = this.nextBillingAt?.plusMonths(billingPolicy.cycle.toLong())
+        val current = this.nextBillingAt ?: return
+        val payDay = billingPolicy.anchorPayDays?.firstOrNull()
+        this.nextBillingAt = if (payDay != null) {
+          // plusMonths 만 쓰면 1/31 → 2/28 → 3/28 처럼 결제일이 한 번 당겨진 뒤 돌아오지 않는다.
+          // 기준일(anchor)로 매번 다시 맞춰서 3/31 로 돌아오게 한다.
+          atAnchorDay(YearMonth.from(current).plusMonths(billingPolicy.cycle.toLong()), payDay, current)
+        } else {
+          current.plusMonths(billingPolicy.cycle.toLong())
+        }
       }
 
       CycleUnit.YEAR -> {
@@ -204,6 +203,11 @@ class Subscription(
       }
     }
   }
+
+  private fun clampDay(month: YearMonth, day: Int): Int = minOf(day, month.lengthOfMonth())
+
+  private fun atAnchorDay(month: YearMonth, payDay: Int, time: LocalDateTime): LocalDateTime =
+    month.atDay(clampDay(month, payDay)).atTime(time.toLocalTime())
 }
 
 enum class SubscriptionStatus {
